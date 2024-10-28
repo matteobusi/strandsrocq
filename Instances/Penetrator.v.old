@@ -1,0 +1,288 @@
+Require Import Coq.Init.Datatypes.
+Require Import Arith.
+Require Import Coq.Lists.List.
+Require Import Coq.Lists.ListSet.
+Require Import Coq.Lists.SetoidList.
+Require Import Lia.
+Require Import Bool.
+
+Import Coq.Lists.List.ListNotations.
+Import Nat.
+Open Scope list_scope.
+
+Require Import Strands.
+Require Import Bundle.
+Require Import Terms.
+Require Import MinimalMPT.
+Require Import StrandsTactics.
+Require Import RelMinimal.
+
+Set Implicit Arguments.
+
+Section PenetratorTraces.
+  (** Penetrators (i.e., attackers) *)
+  Inductive penetrator_trace { AU : AUniverse } (K__P : K -> Prop ) : list sT -> Prop :=
+    | PT_M : forall t : T, penetrator_trace K__P [⊕ $t]
+    | PT_F : forall g : 𝔸, penetrator_trace K__P [⊖ g]
+    | PT_T : forall g : 𝔸, penetrator_trace K__P [⊖ g; ⊕ g; ⊕ g]
+    | PT_C : forall g h : 𝔸, penetrator_trace K__P [⊖ g; ⊖ h; ⊕ g⋅h]
+    | PT_S : forall g h : 𝔸, penetrator_trace K__P [⊖ g⋅h; ⊕ g; ⊕ h]
+    | PT_K : forall (k : K), K__P k -> penetrator_trace K__P [⊕ #k]
+    | PT_E : forall (k : K) (h : 𝔸), penetrator_trace K__P [⊖ #k; ⊖ h; ⊕ ⟨h⟩_k]
+    | PT_D : forall (k : K) (h : 𝔸), penetrator_trace K__P [⊖ #k⁻¹; ⊖ ⟨h⟩_k; ⊕ h].
+
+  Class PenetratorSig {AU : AUniverse} {Σ : Set} `{SSp : StrandSpaceSig (A := 𝔸) Σ} :=
+    {
+      K__P : K -> Prop; (* Penetrators know a subset of the keys *)
+      P : Σ -> Prop; (* A subset of all the strands belong to the penetrator ... *)
+      is_penetrator : forall s, P s -> penetrator_trace K__P (tr s) (* ... and they have a specific shape of traces *)
+    }.
+
+  (* Now definitions to define penetrator objects *)
+  Context { AU : AUniverse } {Σ : Set} { SSp : StrandSpaceSig (A := 𝔸) Σ} {Pn : PenetratorSig (SSp := SSp)}.
+  Definition penetrator_strand  s := P s.
+  Definition penetrator_node (n : node__t) := penetrator_strand (strand n).
+  Definition penetrator_key (k : K) := K__P k.
+
+  Definition never_originates_regular k C :=
+    forall n, is_node_of n C -> originates #k n -> penetrator_node n.
+  Definition originates_regular k C :=
+    exists n, is_node_of n C /\ originates #k n /\ ~ penetrator_node n.
+
+End PenetratorTraces.
+
+Section PenetratorBound.
+  Context { AU : AUniverse } {Σ : Set} { SSp : StrandSpaceSig (A := 𝔸) Σ} {Bn : BundleSig (A := 𝔸)} {Pn : PenetratorSig (SSp := SSp)}.
+
+  Proposition penetrator_bound_set :
+    forall (k__R:K),
+      ~ penetrator_key k__R ->
+      never_originates_regular k__R C ->
+      Nsubt #k__R = nil.
+  Proof.
+    intros k__R Hnpen Hknreg.
+    destruct (Nsubt #k__R) eqn:HN; try easy.
+    (* by Lemma 2.6 the bundle has a minimal element m *)
+    assert ((Nsubt #k__R) <> []) as HNsubt_non_empty by (now rewrite HN).
+    specialize (RelMinimal.exists_minimal eq_node__t_dec (bundle_le_dec C) (bundle_le_antisymm) (bundle_le_trans (C:=C)) HNsubt_non_empty) as [m [Hin0 Horig]].
+    (* Lemma 2.8 guarantees that k__R in K originates in m *)
+    apply (minimal_then_originates _ Hin0) in Horig.
+    apply (Nsubtiff_inC_p) in Hin0 as [HinC Hp].
+    (* as a consequence, m is always a penetrator node by assumption Hnkreg *)
+    specialize (Hknreg _ HinC Horig) as Hm_is_penetrator.
+    apply is_penetrator in Hm_is_penetrator.
+    (* We now go by cases on the penetrator traces and show that nodes_with_term is always empty *)
+    inversion Hm_is_penetrator as [t|g|g|g h|g h|k Hpenkey|k h|k h].
+    all: specialize (originates_then_mpt H Horig) as Hcontra; simpl in Hcontra.
+    all: simplify_prop in Hcontra; try tauto.
+  Qed.
+
+  Proposition penetrator_bound :
+    forall k__R,
+      ~ penetrator_key k__R ->
+      never_originates_regular k__R C ->
+        (forall p, is_node_of p C -> penetrator_node p ->
+              ~ (#k__R ⊏ (uns_term p))
+        ).
+  Proof.
+      intros k__R Hisreg Hnorig p Hisnode Hpennode HcontraS.
+      specialize (penetrator_bound_set Hisreg Hnorig) as Hset.
+      specialize (Nsubtiff_inC_p #k__R p) as [_ Hr].
+      st_implication Hr.
+      unfold Nsubt in *.
+      now rewrite Hset in Hr.
+  Qed.
+
+  (* As corollaries of the penetrator bound, we prove that decryption and
+     encryption keys that never originates on regular strands and are not
+     penetrator keys can never be learned by the penetrator *)
+  Corollary penetrator_never_learn_secure_decryption_key :
+    forall s h k k',
+      never_originates_regular k'⁻¹ C ->
+      penetrator_strand s ->
+      [⊖ #k⁻¹; ⊖ ⟨h⟩_k; ⊕ h] = tr s ->
+      is_node_of (s,0) C ->
+      ~ penetrator_key k'⁻¹ ->
+      k <> k'.
+  Proof.
+    intros s h k k' Hneverorig Hpen Htrace HinC Hnopenkey.
+    specialize (penetrator_bound Hnopenkey Hneverorig _ HinC) as Hbound.
+    st_implication Hbound; simplify_term_in Hbound.
+    unfold not; intros; now subst.
+  Qed.
+
+  Corollary penetrator_never_learn_secure_encryption_key :
+    forall s h k k',
+      never_originates_regular k' C ->
+      penetrator_strand s ->
+      [⊖ #k; ⊖ h; ⊕ ⟨h⟩_k] = tr s ->
+      is_node_of (s,0) C ->
+      ~ penetrator_key k' ->
+      k <> k'.
+  Proof.
+    intros s h k k' Hneverorig Hpen Htrace HinC Hnopenkey.
+    specialize (penetrator_bound Hnopenkey Hneverorig _ HinC) as Hbound.
+    st_implication Hbound; simplify_term_in Hbound.
+    unfold not; intros; now subst.
+  Qed.
+
+End PenetratorBound.
+
+Section PenBoundPairs.
+  Context { AU : AUniverse } {Σ : Set} { SSp : StrandSpaceSig (A := 𝔸) Σ} {Bn : BundleSig (A := 𝔸)} {Pn : PenetratorSig (SSp := SSp)}.
+
+  Variable p1 : 𝔸 -> Prop.
+  Variable p2 : 𝔸 -> Prop.
+
+  Definition p1_and_p2 := fun t => p1 t /\ p2 t.
+  Hypothesis p1_and_p2_dec : forall t, { p1_and_p2 t } + { ~ p1_and_p2 t }.
+
+  Definition Np1_and_p2 := N p1_and_p2 p1_and_p2_dec.
+  Definition Np1_and_p2_iff_inC_p1_and_p2 := N_iff_inC_p p1_and_p2 p1_and_p2_dec.
+
+  Definition p_pair g h t := (g ⋅ h) ⊏ t.
+  #[local] Hint Unfold p_pair : core.
+
+  Lemma p_pair_dec : forall g h t, { p_pair g h t } + { ~ p_pair g h t }.
+  Proof.
+    intros. unfold p_pair. destruct (A_subterm_dec (g ⋅ h) t0); eauto.
+  Qed.
+  Definition NWp_pair g h := NW (p_pair g h) (p_pair_dec g h).
+  Definition NWp_pair_dec g h := NW (p_pair g h) (p_pair_dec g h).
+  Definition NWp_pair_iff_inC_NWp_pair g h := NW_iff_inC_p (p_pair g h) (p_pair_dec g h).
+
+  Lemma NWp_pair_is_weak_sign_closed :
+    forall g h n, sign_closed_weak (NWp_pair g h n).
+  Proof.
+    intros g h n. unfold sign_closed_weak. intros Hsub m Hin Hneg.
+    specialize (Hsub _ Hin).
+    specialize (interstrand_exists_prec_positive_lt_uns m) as Hexists.
+    st_implication Hexists.
+    destruct Hexists as [m' [Hnode [Hpos [Hect Huns]]]].
+    exists m'.
+    unfold set_In in Hin. rewrite (NWp_pair_iff_inC_NWp_pair g h n) in Hin.
+    repeat split; try easy.
+    unfold set_In.
+    rewrite (NWp_pair_iff_inC_NWp_pair g h n).
+    repeat split; try easy.
+    - unfold p_pair, uns_term in *. now rewrite <-Huns.
+    - now apply (bundle_lt_multi Hect).
+  Qed.
+
+  Definition minimal_NWp_pair_then_mpt g h n := minimal_NW_then_mpt (p_pair g h) (p_pair_dec g h) n.
+
+  Definition pair_not_regular_g p :=
+    forall g h n n',
+    ~p g ->
+    set_In n (NWp_pair g h n') ->
+    is_minimal (bundle_le C) n (NWp_pair g h n') ->
+    penetrator_node n.
+
+  Definition pair_not_regular_h p :=
+    forall g h n n',
+    ~p h ->
+    set_In n (NWp_pair g h n') ->
+    is_minimal (bundle_le C) n (NWp_pair g h n') ->
+    penetrator_node n.
+
+  Lemma penetrator_pair_not_minimal_g :
+    forall g h s, penetrator_strand s ->
+    [⊖ g ⋅ h; ⊕ g; ⊕ h] = tr s ->
+    is_node_of (s,1) C ->
+    p1 g /\ p2 g /\ ~p2 h ->
+    pair_not_regular_h p2 ->
+    ~is_minimal (bundle_le C) (s,1) Np1_and_p2.
+  Proof.
+    intros g h s Hpen Htrace Hin Hc1 Hnotregular.
+    specialize (C_is_bundle) as Hbundle.
+    assert ( set_In (s, 1) Np1_and_p2 ) as Hs1in. {
+      rewrite Np1_and_p2_iff_inC_p1_and_p2.
+      unfold p1_and_p2. simplify_term.
+    }
+
+    assert ( In (s, 0) (NWp_pair g h (s,1))) as HinNWsub. {
+      (* Check (index_lt_strand_implies_is_node_of). *)
+      apply (NWp_pair_iff_inC_NWp_pair). repeat split.
+      - apply (index_lt_strand_implies_is_node_of _ (s,1)); simpl; try lia; repeat easy.
+      - unfold p_pair. simplify_term.
+      - apply (index_lt_strand_implies_bundle_lt); simpl; try lia; repeat easy.
+      }
+    assert ((NWp_pair g h (s,1)) <> []) as NW_non_empty by (destruct (NWp_pair g h (s,1)); try easy).
+
+    specialize (RelMinimal.exists_minimal eq_node__t_dec (bundle_le_dec C) (bundle_le_antisymm) (bundle_le_trans (C:=C)) NW_non_empty) as [m0 [Hin0 Hmin0]].
+    specialize (Hnotregular g h m0 (s,1)) as HP.
+    st_implication HP;
+    unfold penetrator_node, penetrator_strand in HP.
+    assert (Hpentrace0:=HP); apply is_penetrator in Hpentrace0.
+    inversion Hpentrace0 as [t Htrace0|g0 Htrace0|g0 Htrace0|g0 h0 Htrace0|g0 h0 Htrace0|k Hpenkey Htrace0|k h0 Htrace0|k h0 Htrace0].
+    all: specialize (minimal_NWp_pair_then_mpt g h (s,1) Htrace0 Hin0 Hmin0) as Hmpti; unfold p_pair in Hmpti; simpl in Hmpti.
+    all: simplify_prop in Hmpti.
+    intro Hcontra.
+    assert (Hin0':=Hin0).
+    apply (NWp_pair_iff_inC_NWp_pair) in Hin0' as [Hin1 [_ Hect]].
+    specialize (index_lt_strand_implies_bundle_lt ((strand m0),0) m0) as Hect1. simpl in Hect1. st_implication Hect1.
+    specialize (bundle_lt_multi Hect1 Hect) as Hect2.
+    assert (set_In ((strand m0),0) (Np1_and_p2)) as Hinm00. {
+      unfold set_In. apply (Np1_and_p2_iff_inC_p1_and_p2).
+      split.
+      - apply (index_lt_strand_implies_is_node_of (strand m0, 0) m0); simpl; try lia; easy.
+      - unfold p1_and_p2. subst. simplify_term.
+      }
+    assert (((strand m0),0) <> (s,1)) as H00neq by easy.
+    unfold is_minimal in Hcontra.
+    st_implication Hcontra.
+    specialize (Hcontra _ Hinm00). st_implication Hcontra.
+    now apply (bundle_lt_then_le) in Hect2.
+  Qed.
+
+  Lemma penetrator_pair_not_minimal_h :
+    forall g h s, penetrator_strand s ->
+    [⊖ g ⋅ h; ⊕ g; ⊕ h] = tr s ->
+    is_node_of (s,2) C ->
+    p1 h /\ p2 h /\ ~p2 g ->
+    pair_not_regular_g p2 ->
+    ~is_minimal (bundle_le C) (s,2) Np1_and_p2.
+  Proof.
+    intros g h s Hpen Htrace Hin Hc1 Hnotregular.
+    specialize (C_is_bundle) as Hbundle.
+    assert ( set_In (s, 2) Np1_and_p2 ) as Hs1in. {
+      rewrite Np1_and_p2_iff_inC_p1_and_p2.
+      unfold p1_and_p2. simplify_term.
+    }
+    assert ( In (s, 0) (NWp_pair g h (s,2))) as HinNWsub. {
+          apply (NWp_pair_iff_inC_NWp_pair). repeat split.
+          - apply (index_lt_strand_implies_is_node_of _ (s,2)); simpl; try lia; repeat easy.
+          - unfold NWp_pair, p_pair; simplify_term.
+          - apply (index_lt_strand_implies_bundle_lt); simpl; try lia; repeat easy.
+        }
+    assert ((NWp_pair g h (s,2)) <> []) as NW_non_empty by (destruct (NWp_pair g h (s,2)); try easy).
+
+    specialize (RelMinimal.exists_minimal eq_node__t_dec (bundle_le_dec C) (bundle_le_antisymm) (bundle_le_trans (C:=C)) NW_non_empty) as [m0 [Hin0 Hmin0]].
+    specialize (Hnotregular g h m0 (s,2)) as HP.
+    st_implication HP;
+    unfold penetrator_node, penetrator_strand in HP.
+    unfold penetrator_strand in HP.
+    apply is_penetrator in HP.
+    inversion HP as [t Htrace0|g0 Htrace0|g0 Htrace0|g0 h0 Htrace0|g0 h0 Htrace0|k Hpenkey Htrace0|k h0 Htrace0|k h0 Htrace0].
+    all: specialize (minimal_NWp_pair_then_mpt g h (s,2) Htrace0 Hin0 Hmin0) as Hmpti; unfold p_pair in Hmpti; simpl in Hmpti.
+    all: simplify_prop in Hmpti.
+    intro Hcontra.
+    assert (Hin0':=Hin0).
+    apply (NWp_pair_iff_inC_NWp_pair) in Hin0' as [Hin1 [_ Hect]].
+    specialize (index_lt_strand_implies_bundle_lt ((strand m0),1) m0) as Hect1. simpl in Hect1. st_implication Hect1.
+    specialize (bundle_lt_multi Hect1 Hect) as Hect2.
+    assert (set_In ((strand m0),1) (Np1_and_p2)) as Hinm00. {
+      unfold set_In. apply (Np1_and_p2_iff_inC_p1_and_p2).
+      split.
+      - apply (index_lt_strand_implies_is_node_of (strand m0, 1) m0); simpl; try lia; easy.
+      - unfold p1_and_p2. subst. simplify_term.
+    }
+    assert (((strand m0),1) <> (s,2)) as H00neq by easy.
+    unfold is_minimal in Hcontra.
+    st_implication Hcontra.
+    specialize (Hcontra _ Hinm00).
+    st_implication Hcontra.
+    now apply (bundle_lt_then_le) in Hect2.
+  Qed.
+
+End PenBoundPairs.

@@ -1,0 +1,245 @@
+Require Import Lia.
+Require Import Coq.Lists.List.
+Import Coq.Lists.List.ListNotations.
+
+Require Import DefaultInstances.
+Require Import PenetratorSAL. (* We depend on PenetratorSAL just to avoid code duplication *)
+
+Set Implicit Arguments.
+
+Section SimpleAuthSpec.
+  (** * Example: A Simple Unilateral Authentication Protocol
+
+  This is the [SimpleAuth.v] protocol in which we define a maximal penetrator that can do everything except originating [⟨ Na ⋅ A ⟩_(SK A B)].
+  [[
+  A -> B :  A ⋅ B ⋅ Na
+  B -> A :  ⟨ Na ⋅ A ⟩_(SK A B)
+  ]]
+  *)
+
+  (* ============================================================ *)
+  (** * Protocol Specification  *)
+  Inductive SA_initiator_strand (A B Na : T) : Σ -> Prop :=
+    | SAS_Init : forall i,
+      SA_initiator_strand A B Na (i, [ ⊕ $A ⋅ $B ⋅ $Na; ⊖ ⟨ $Na ⋅ $A ⟩_(SK A B) ]).
+
+  Inductive SA_responder_strand (A B Na : T) : Σ -> Prop :=
+    | SAS_Resp : forall i,
+      SA_responder_strand A B Na (i, [ ⊖ $A ⋅ $B ⋅ $Na; ⊕ ⟨ $Na ⋅ $A ⟩_(SK A B) ]).
+
+  (* We won't need this here *)
+  (* Definition K__P_AB (A B : T) (k : K) := k <> SK A B. *)
+
+  (** Maximal penetrator: Instead of using the definitions from PenetratorSAL,
+      we simply say that a strand that is neither initiator nor responder is from the penetrator
+  *)
+  Definition SA_penetrator_strand A B Na s :=
+    ~SA_initiator_strand A B Na s /\ ~SA_responder_strand A B Na s.
+
+  (* FIXME: @Riccardo take a look at this definition, esp. SASS_Pen.
+        Initially I was convinced that SASS_Pen should've been forall A B Na s, ...
+        but it looks wrong because:
+        1. a penetrator should be able to generate any strand which does not originate SK A B, meaning it could also potentially output SK A' B' with A <> A' and B <> B'
+        2. expanding the forall A B Na s, ... definition we get that for any strand that is not regular for any choice of A/B/Na, that strand is a penetrator's strand --- it seems to me that this excludes traces in 1.
+        3. I cannot complete the proof, because there's no way to discard the Penetrator case since we cannot bind the A/B/Na parameters on the penetrator with those used by other strands and thus to derive the contradiction (related to 1!)
+   *)
+  (* Since we don't have K__P_AB anymore, we need to anchor the penetrator strand to the specific A/B/Na that the penetrator cannot imitate, we do this via [Ap], [Bp], and [Nap] *)
+  Inductive SA_StrandSpace (Ap Bp Nap : T) : Σ -> Prop :=
+    | SASS_Pen  : forall s, SA_penetrator_strand Ap Bp Nap s -> SA_StrandSpace Ap Bp Nap s
+    | SASS_Init : forall (A B Na : T) s, SA_initiator_strand A B Na s -> SA_StrandSpace Ap Bp Nap s
+    | SASS_Resp : forall (A B Na : T) s, SA_responder_strand A B Na s -> SA_StrandSpace Ap Bp Nap s.
+
+  (** NEW: We take the biggest penetrator that does not originate [(⟨ $Na ⋅ $A ⟩_(SK A B))] if [SK_AB] is not leaked by the initiator or the responder. Notice that [~is_mpti n 0 (index n) (tr s) Ncp] tells that no node [n] of a penetrator strand s admits a local minimal of Ncp which in turns requires [(⟨ $Na ⋅ $A ⟩_(SK A B)) ⊏ t]. Such a local minimal would be an originating node for [(⟨ $Na ⋅ $A ⟩_(SK A B))].
+  *)
+
+  (** we anticipate these parameters and definitions here *)
+  Definition Ncp A B Na t := (⟨ $Na ⋅ $A ⟩_(SK A B)) ⊏ t.
+
+  (** ** This is *exactly* what penetrators are expected not to do:  *)
+  (** i.e., penetrator does not originate [SK A B]. *)
+  Definition SA_penetrator_SK_AB A B Na :=
+    forall n, SA_penetrator_strand A B Na (strand n) ->
+      ~originates #(SK A B) n.
+
+  (** Penetrator cannot forge [(⟨ $Na ⋅ $A ⟩_(SK A B))] if [SK A B] never originates in the bundle *)
+  Definition SK_AB_never_originates A B C :=
+    forall n, is_node_of n C -> ~originates #(SK A B) n.
+
+  Definition SA_penetrator_crypto A B Na C :=
+    SK_AB_never_originates A B C ->
+      forall n, SA_penetrator_strand A B Na (strand n) ->
+        ~is_mpti n 0 (index n) (tr (strand n)) (Ncp A B Na).
+
+  (* ============================================================ *)
+  Lemma SK_AB_never_originates_regular :
+    forall C A B Na n, is_node_of n C -> originates #(SK A B) n ->
+      SA_penetrator_strand A B Na (strand n).
+  Proof.
+    intros C A B Na n Hnodeof Horig.
+    unfold not.
+    split; unfold not; intros Hinires.
+    all: inversion Hinires as [i Htrace];
+          apply (f_equal tr) in Htrace;
+          apply (originates_then_mpt Htrace) in Horig;
+          unfold mpt in Horig; now simplify_prop in Horig.
+  Qed.
+End SimpleAuthSpec.
+
+Section SimpleAuthSecurity.
+  (**
+    Local assumptions to make the rest more easily readable.
+  *)
+  Variable s : Σ.
+  Variable C : edge_set__t.
+
+  Variable A B : T.
+  Variable Na : T.
+
+  (* Here we assume to have a run of the protocol on A/B/Na with the penetrato unable to "imitate" A/B/Na sessions *)
+  Hypothesis s_is_SA_init : SA_initiator_strand A B Na s.
+  Hypothesis s_strand_of_C : is_strand_of s C.
+  Hypothesis C_is_SA_bundle : strandspace_bundle C (SA_StrandSpace A B Na).
+
+  (* Some facts, for easier use of C_is_SA_bundle *)
+  Proposition C_is_bundle : is_bundle C.
+  Proof. now unfold strandspace_bundle in C_is_SA_bundle. Qed.
+
+  Proposition C_is_SA :
+    forall n, is_node_of n C -> SA_StrandSpace A B Na (strand n).
+  Proof. now unfold strandspace_bundle in C_is_SA_bundle. Qed.
+  (** * Proof of Security
+  We now prove unilateral authentication properties of the protocol from the initiator perspective.  *)
+
+  (* ============================================================ *)
+  (** ** Non-injective agreement *)
+  #[local] Hint Unfold Ncp uns term uns_term : core.
+
+  Lemma Ncp_dec : forall t, { Ncp A B Na t } + { ~ Ncp A B Na t }.
+  Proof.
+    intros t;
+    destruct (A_subterm_dec (⟨ $Na ⋅ $A ⟩_(SK A B)) t);
+    (try now right); (try now left).
+  Qed.
+
+  Definition Nc := N (Ncp A B Na) C Ncp_dec.
+  Definition Nc_iff_inC_Ncp := N_iff_inC_p (Ncp A B Na) C Ncp_dec.
+  Definition minimal_Nc_then_mpt := minimal_N_then_mpt (Ncp A B Na) C_is_bundle Ncp_dec.
+  Definition minimal_Nc_then_is_mpti := minimal_N_then_is_mpti (Ncp A B Na) C_is_bundle Ncp_dec.
+
+  Lemma Nc_non_empty :
+    Nc <> nil.
+  Proof.
+    unfold Nc.
+    specialize (s_is_SA_init) as Ht; inversion Ht as [Htrs].
+    specialize (s_strand_of_C (s, 1)) as HinC.
+    specialize (Nc_iff_inC_Ncp (s, 1)) as [_ Hin].
+    st_implication HinC.
+    intros Heq; rewrite Heq in Hin.
+    destruct Hin; split; try easy.
+    autounfold. simplify_term.
+  Qed.
+
+  Proposition noninjective_agreement :
+    SA_penetrator_SK_AB A B Na ->
+      SA_penetrator_crypto A B Na C ->
+        exists s' : Σ,
+          SA_responder_strand A B Na s' /\
+            is_strand_of s' C.
+  Proof.
+    intros SA_penetrator_SK_AB SA_penetrator_crypto.
+    specialize (exists_minimal_bundle C_is_bundle Nc_non_empty) as [m [Hin Hmin]].
+    assert (Hin':=Hin).
+    apply (Nc_iff_inC_Ncp) in Hin' as [HinC HNcp].
+    specialize (C_is_bundle) as Hbundle.
+    specialize (s_is_SA_init) as Hstrace.
+    inversion Hstrace as [i Hstrace0].
+    specialize (C_is_SA m HinC) as His_SA.
+    inversion His_SA as [s' Hpen|A' B' Na' s' Hini|A' B' Na' s' Hres].
+
+    (** _Penetrator case_ *)
+    - set (α := tr (strand m));
+      assert (α = tr (strand m)) as H1 by easy.
+      pose (s0' := s').
+
+      specialize (SA_penetrator_SK_AB) as HpenSK.
+      assert (SK_AB_never_originates A B C) as Hnever. {
+        unfold SK_AB_never_originates.
+        intros n HinCn.
+        specialize (C_is_SA n HinCn) as His_SA_n.
+        destruct His_SA_n as [s_n Hpen_n|A_n B_n Na_n s_n Hini_n|A_n B_n Na_n s_n Hres_n].
+
+        all: unfold SimpleAuthMaximal.SA_penetrator_crypto in *; specialize (SA_penetrator_SK_AB n); st_implication SA_penetrator_SK_AB.
+        all: specialize (SK_AB_never_originates_regular C A B Na HinCn) as Hnoreg; unfold not; intros; st_implication Hnoreg; now unfold SA_penetrator_strand in *.
+      }
+
+      specialize (minimal_Nc_then_is_mpti H1) as Hmpti;
+      st_implication Hmpti.
+      specialize (SA_penetrator_crypto Hnever m) as HpenCrypto.
+      st_implication HpenCrypto.
+
+    (** _Initiator case_ *)
+    - inversion Hini as [j Htrace].
+      apply (f_equal tr) in Htrace.
+      specialize (minimal_Nc_then_mpt Htrace Hin Hmin) as Hmpti;
+      autounfold in Hmpti; simpl in Hmpti.
+      simplify_prop in Hmpti.
+
+    (** _Responder case_: *)
+    - inversion Hres as [j Htrace].
+      apply (f_equal tr) in Htrace.
+      specialize (minimal_Nc_then_mpt Htrace Hin Hmin) as Hmpti;
+      autounfold in Hmpti; simpl in Hmpti.
+      simplify_prop in Hmpti; try rewrite Hand2.
+      all: exists (strand m); split; auto;
+      specialize (last_node_implies_is_strand_of C_is_bundle m) as Hsof;
+      st_implication Hsof.
+  Qed.
+
+  (* ============================================================ *)
+  (** ** Injective agreement   *)
+
+  Proposition injectivity :
+  forall U U',
+      uniquely_originates $Na ->
+      forall s' : Σ,
+        SA_initiator_strand U U' Na s' ->
+        s' = s.
+  Proof.
+    intros U U' Huorig s' Hini'.
+    inversion Hini' as [Htrace'].
+    specialize s_is_SA_init as Hini.
+    inversion Hini as [Htrace].
+    inversion Huorig as [? [_ Horigx]].
+    assert (Horigx' := Horigx).
+    specialize (mpti_then_originates $Na (s,0)) as Horig.
+    specialize (mpti_then_originates $Na (s',0)) as Horig'.
+    pose (s0:=s); pose (s'0:=s').
+    simplify_term_in Horig; st_implication Horig.
+    simplify_term_in Horig'; st_implication Horig'.
+    specialize (Horigx' (s'0, 0) Horig'); specialize (Horigx (s0,0) Horig); subst.
+    now inversion Horigx'.
+  Qed.
+
+  (** From [noninjective_agreement] and [injectivity] we obtain injective agreement as a corollary: *)
+  Corollary injective_agreement :
+    SA_penetrator_SK_AB A B Na ->
+      SA_penetrator_crypto A B Na C ->
+        uniquely_originates $Na ->
+        (
+          exists s' : Σ,
+            SA_responder_strand A B Na s' /\
+            is_strand_of s' C
+        )
+        /\
+        (
+          forall s'' : Σ,
+            SA_initiator_strand A B Na s'' ->
+            s'' = s
+        ).
+  Proof.
+    split.
+    - now apply noninjective_agreement.
+    - now apply injectivity.
+  Qed.
+
+End SimpleAuthSecurity.
