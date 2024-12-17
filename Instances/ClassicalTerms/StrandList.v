@@ -14,7 +14,7 @@ Require Import UTerms.
 Set Implicit Arguments.
 
 (* First, we define the Universe upon which we build Terms *)
-Module UniverseNat : UniverseSig.
+Module UniverseNat <: UniverseSig.
   Definition U := nat.
   Definition U_leb := Nat.leb.
   Definition U_eq_dec := Nat.eq_dec.

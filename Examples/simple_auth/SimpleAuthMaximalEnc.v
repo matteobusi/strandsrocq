@@ -49,6 +49,7 @@ Section SimpleAuthSpec.
 
   (* We show that the usual DY penetrator is subsumed by the maximal one *)
   Definition K__P_AB (A B : T) (k : K) := k <> SK A B.
+
   Lemma DY_is_SA_maximal_penetrator:
     forall A B s, penetrator_strand (K__P_AB A B) s -> SA_maximal_penetrator_strand A B s.
   Proof.
@@ -65,6 +66,26 @@ Section SimpleAuthSpec.
       simplify_prop in Horig using decidability.
       exists ((strand n),0). split; try simplify_term.
       rewrite node_as_pair. rewrite Hand2. apply lt_intrastrand_index; simpl. lia. now easy.
+  Qed.
+
+  (* Also, the DY penetrator is strictly subsumed by the maximal penetrator.
+  *)
+  Lemma SA_maximal_penetrator_not_eq_DY:
+  forall A B,
+      exists s,
+        SA_maximal_penetrator_strand A B s /\ ~ penetrator_strand (K__P_AB A B) s.
+  Proof.
+    intros A B.
+    assert (m : 𝔸) by constructor.
+
+    exists (0, [⊖ ⟨ m ⟩_(SK A B); ⊕ m ]).
+    split.
+    - apply SAS_Pen. intros n Hstrand; apply (f_equal tr) in Hstrand; simpl in Hstrand. split.
+      + intros Horig. apply (originates_then_mpt Hstrand) in Horig.
+        simplify_prop in Horig.
+      + intros p Horig. apply (originates_then_mpt Hstrand) in Horig.
+        simplify_prop in Horig. destruct Hand. right. easy.
+    - intros Hpen. inversion Hpen.
   Qed.
 
   (* The next results are useful to enable protocol composition under maximal penetrators *)
