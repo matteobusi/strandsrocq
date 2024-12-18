@@ -3,7 +3,7 @@
 This repository contains a Coq/Rocq mechanization of strand spaces.
 It includes the full mechanization of the strand framework, new general results about strands and three case studies with a number of variants.
 More details in the paper:
-> [M. Busi, R. Focardi and F. Luccio. Strands Rocq: Why is a Security Protocol Correct, Mechanically?](https://arxiv.org/abs/TBA), 2024.
+> M. Busi, R. Focardi and F. Luccio. Strands Rocq: Why is a Security Protocol Correct, Mechanically?
 
 # Structure of the project
 
