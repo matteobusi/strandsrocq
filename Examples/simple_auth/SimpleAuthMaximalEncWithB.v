@@ -13,9 +13,9 @@ Set Implicit Arguments.
 Section SimpleAuthSpec.
   (** * Example: A Simple Unilateral Authentication Protocol
 
-  This is the [SimpleAuth.v] protocol in which we define a maximal penetrator that can do everything except originating [SK A B] and     
-  
-  ** NOTE: This is the variant of [SimpleAuthMaximalEnc.v] that includes [B] instead of [A] in the ciphertext. The proofs are identical. We only needed to adapt the definition of [Ncp] and replace 
+  This is the [SimpleAuth.v] protocol in which we define a maximal penetrator that can do everything except originating [SK A B] and
+
+  ** NOTE: This is the variant of [SimpleAuthMaximalEnc.v] that includes [B] instead of [A] in the ciphertext. The proofs are identical. We only needed to adapt the definition of [Ncp] and replace
   [specialize (HnoForge ($Na ⋅ $A ) Hismpti).] with [specialize (HnoForge ($Na ⋅ $B ) Hismpti).] at line 156.
   [destruct (A_subterm_dec (⟨ $Na ⋅ $A ⟩_(SK A B)) t);] with [destruct (A_subterm_dec (⟨ $Na ⋅ $B ⟩_(SK A B)) t);] at line 177.
   [try rewrite Hand2.] with [try rewrite Hand1.] at line 234.
@@ -47,8 +47,8 @@ Section SimpleAuthSpec.
       exists n', n' ⟹+ n /\ term n' = ⊖ #(SK A B).
 
   (* Inductive SA_maximal_penetrator_strand (A B : T) : Σ -> Prop :=
-    | SAS_Pen : forall s, 
-        ( forall n, s = strand n -> 
+    | SAS_Pen : forall s,
+        ( forall n, s = strand n ->
           ~originates #(SK A B) n /\ NoForgeCipher A B n ) ->
           SA_maximal_penetrator_strand A B s. *)
 
@@ -63,7 +63,7 @@ Section SimpleAuthSpec.
     forall A B s, penetrator_strand (K__P_AB A B) s -> SA_maximal_penetrator_strand A B s.
   Proof.
     intros A B s Hpen. split. intros n Hstrand. split.
-    - unfold not. intros Horig.  
+    - unfold not. intros Horig.
       inversion Hpen as
         [t j Htrace|g j Htrace|g j Htrace|g h j Htrace|g h j Htrace|k Hpenkey j Htrace| k h j Htrace|k h j Htrace]; apply (f_equal tr) in Htrace; simpl in Htrace; rewrite Hstrand in Htrace;
       apply (originates_then_mpt Htrace) in Horig;
@@ -76,6 +76,27 @@ Section SimpleAuthSpec.
       exists ((strand n),0). split; try simplify_term.
       rewrite node_as_pair. rewrite Hand2. apply lt_intrastrand_index; simpl. lia. now easy.
   Qed.
+
+
+  (* Also, the DY penetrator is strictly subsumed by the maximal penetrator.
+  *)
+    Lemma SA_maximal_penetrator_not_eq_DY:
+    forall A B,
+        exists s,
+          SA_maximal_penetrator_strand A B s /\ ~ penetrator_strand (K__P_AB A B) s.
+    Proof.
+      intros A B.
+      assert (m : 𝔸) by constructor.
+
+      exists (0, [⊖ ⟨ m ⟩_(SK A B); ⊕ m ]).
+      split.
+      - apply SAS_Pen. intros n Hstrand; apply (f_equal tr) in Hstrand; simpl in Hstrand. split.
+        + intros Horig. apply (originates_then_mpt Hstrand) in Horig.
+          simplify_prop in Horig.
+        + intros p Horig. apply (originates_then_mpt Hstrand) in Horig.
+          simplify_prop in Horig. destruct Hand. right. easy.
+      - intros Hpen. inversion Hpen.
+    Qed.
 
   (* The next results are useful to enable protocol composition under maxima penetrators *)
 
@@ -90,7 +111,7 @@ Section SimpleAuthSpec.
     intros n Hstrand; apply (f_equal tr) in Hstrand; simpl in Hstrand. split.
     - unfold not. intros Horig. apply (originates_then_mpt Hstrand) in Horig.
       simplify_prop in Horig.
-    - intros p Horig. apply (originates_then_mpt Hstrand) in Horig. 
+    - intros p Horig. apply (originates_then_mpt Hstrand) in Horig.
       simplify_prop in Horig.
   Qed.
   (* penetrator can simulate responders only if pair [A B] differs from [A' B'] and [B' A'] *)
@@ -112,13 +133,13 @@ Section SimpleAuthSpec.
 
   (* ============================================================ *)
   Lemma SK_AB_never_originates :
-    forall C A B n, C_is_SS C (SA_StrandSpace A B) -> 
-      is_node_of n C -> 
+    forall C A B n, C_is_SS C (SA_StrandSpace A B) ->
+      is_node_of n C ->
       ~originates #(SK A B) n.
   Proof.
     intros C A B n H_is_SS H_is_node_of  Horig. specialize (H_is_SS n H_is_node_of).
     inversion H_is_SS.
-    1: inversion H as [n0 Horig' Hstrand]; specialize (Horig' n); st_implication Horig'. 
+    1: inversion H as [n0 Horig' Hstrand]; specialize (Horig' n); st_implication Horig'.
     1,2: inversion H as [i Htrace]; apply (f_equal tr) in Htrace; simpl in Htrace;
     apply (originates_then_mpt Htrace) in Horig;
     simplify_prop in Horig.
@@ -139,9 +160,9 @@ Section SimpleAuthSecurity.
   Hypothesis s_strand_of_C : is_strand_of s C.
   Hypothesis C_is_bundle : is_bundle C.
   Hypothesis C_is_SA_bundle : C_is_SS C (SA_StrandSpace A B).
-  
-  (* 
-      NoForgeCipher is sufficient to prove that the attacker dees not originate the 
+
+  (*
+      NoForgeCipher is sufficient to prove that the attacker dees not originate the
      ciphertext [⟨ $Na ⋅ $A ⟩_(SK A B)]. This lemma is enough to reject the penetrator
      case in the authentication lemma
   *)
